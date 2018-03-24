@@ -1,3 +1,6 @@
+This is a development project to read elf files.
+        
+        
         {
             "header": {
                 "EI_MAG0": "127",
