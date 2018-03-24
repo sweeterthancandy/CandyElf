@@ -338,7 +338,10 @@ struct PrettyPrinter{
 
 struct Nothing{};
 struct StringTable{
-        explicit StringTable(std::vector<std::string> const& vec):vec_{vec}{}
+        explicit StringTable(const char* first, std::vector<std::string> const& vec)
+                :first_{first},vec_{vec}
+        {}
+        const char* first_;
         std::vector<std::string> vec_;
 };
 
@@ -356,6 +359,13 @@ struct ElfFile{
         std::vector< SectionType > sections;
 
         std::vector<Elf64_Phdr> program_headers;
+
+        std::string SectionName(Elf64_Word offset)const{
+                if( auto ptr = boost::get<StringTable>(&sections.at(header.e_shstrndx))){
+                        return std::string{ptr->first_ + offset};
+                }
+                throw std::domain_error("out of range");
+        }
 
 
 };
@@ -447,8 +457,9 @@ void PrettyDisplay(ElfFile const& elf){
         for(size_t i=0;i!=elf.section_headers.size();++i){
                 auto const& sh = elf.section_headers[i];
                 bpt::ptree out_sh;
+                out_sh.add("__index"     , i);
                 out_sh.add("sh_type"     , ElfSectionType(sh.sh_type).Name());
-                out_sh.add("sh_name"     , elf.memory[elf.header.e_shstrndx + sh.sh_name]);
+                out_sh.add("sh_name"     , elf.SectionName(sh.sh_name));
                 out_sh.add("sh_flags"    , ElfSectionAttributes.MaskToString(sh.sh_flags));
                 out_sh.add("sh_addr"     , sh.sh_addr);
                 out_sh.add("sh_offset"   , sh.sh_offset);
@@ -475,8 +486,10 @@ void PrettyDisplay(ElfFile const& elf){
                 root.add_child("section_headers", out_sh);
         }
         
-        for( auto const& ph : elf.program_headers){
+        for(size_t i=0;i!=elf.program_headers.size();++i){
+                auto const& ph = elf.program_headers[i];
                 bpt::ptree out_sh;
+                out_sh.add("__index"     , i);
                 out_sh.add("p_type", ElfSectionType(ph.p_type).Name());
                 out_sh.add("p_flags", ph.p_flags);
                 out_sh.add("p_offset", ph.p_offset);
@@ -531,7 +544,7 @@ struct ElfParser{
                                                         std::string tmp = iter;
                                                         vec.push_back(tmp);
                                                 }
-                                                result->sections.push_back( StringTable{ vec } );
+                                                result->sections.push_back( StringTable{origin + sh->sh_offset, vec } );
                                         }while(0);
                                         break;
                                 default:
