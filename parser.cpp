@@ -100,6 +100,16 @@ typedef struct
         Elf64_Xword p_align;  /* Alignment of segment */
 } Elf64_Phdr;
 
+typedef struct
+{
+        Elf64_Word st_name; /* Symbol name */
+        unsigned char st_info; /* Type and Binding attributes */
+        unsigned char st_other; /* Reserved */
+        Elf64_Half st_shndx; /* Section table index */
+        Elf64_Addr st_value; /* Symbol value */
+        Elf64_Xword st_size; /* Size of object (e.g., common) */
+} Elf64_Sym;
+
 enum ElfIE{
 //          Name           Value | Purpose
 //      ----------------+--------+----------------
@@ -306,6 +316,57 @@ static auto ElfSectionAttributes = EnumSwitchBuilder<Elf64_Word>{}
         .Case(0xF0000000, "SHF_MASKPROC", "Processor-specific use")
         .Make();
 
+static auto ElfSegmentAttributes = EnumSwitchBuilder<Elf64_Word>{}
+        .Case(0x1, "PF_X", "Execute permission")
+        .Case(0x2, "PF_W", "Write permission")
+        .Case(0x4, "PF_R", "Read permission")
+        .Case(0x00FF0000, "PF_MASKOS", "These flag bits are reserved for environment-specific use")
+        .Case(0xFF000000, "PF_MASKPROC", "These flag bits are reserv ")
+        .Make();
+
+static auto ElfSymbolBinding = EnumSwitchBuilder<char>{}
+        .Case(0, "STB_LOCAL", "Not visible outside the object file")
+        .Case(1, "STB_GLOBAL", "Global symbol, visible to all object files")
+        .Case(2, "STB_WEAK", "Global scope, but with lower precedence than global symbols")
+        .Case(10, "STB_LOOS", "Environment-specific use")
+        .Case(12, "STB_HIOS")
+        .Case(13, "STB_LOPROC", "Processor-specific use")
+        .Case(15, "STB_HIPROC")
+        .Make();
+
+
+static auto ElfSymbolTypes = EnumSwitchBuilder<char>{}
+        .Case(0, "STT_NOTYPE", "No type specified (e.g., an absolute symbol)")
+        .Case(1, "STT_OBJECT", "Data object")
+        .Case(2, "STT_FUNC", "Function entry point")
+        .Case(3, "STT_SECTION", "Symbol is associated with a section")
+        .Case(4, "STT_FILE", "Source file associated with the object file")
+        .Case(10, "STT_LOOS", "Environment-specific use")
+        .Case(12, "STT_HIOS")
+        .Case(13, "STT_LOPROC", "Processor-specific use")
+        .Case(15, "STT_HIPROC")
+        .Make();
+
+static auto ElfSymbolType = EnumSwitchBuilder<Elf64_Word>{}
+        .Case(0, "SHN_UNDEF", "Used to mark an undefined or meaningless section reference")
+        .Case(0xFF00, "SHN_LOPROC", "Processor-specific use")
+        .Case(0xFF1F, "SHN_HIPROC", "")
+        .Case(0xFF20, "SHN_LOOS", "Environment-specific use")
+        .Case(0xFF3F, "SHN_HIOS", "")
+        .Case(0xFFF1, "SHN_ABS", "Indicates that the corresponding reference is an absolute value")
+        .Case(0xFFF2, "SHN_COMMON", "Indicates a symbol that has been declared as a common block (Fortran COMMON or C tentative declaration)")
+        .Make();
+       
+enum ElfSHN{ 
+        SHN_UNDEF=0,
+        SHN_LOPROC=0xFF00,
+        SHN_HIPROC=0xFF1F,
+        SHN_LOOS=0xFF20, 
+        SHN_HIOS=0xFF3F, 
+        SHN_ABS=0xFFF1,
+        SHN_COMMON=0xFFF2,
+};
+
 struct PrettyPrinterContext{
         std::vector<char> symbol_table;
 };
@@ -344,12 +405,17 @@ struct StringTable{
         const char* first_;
         std::vector<std::string> vec_;
 };
+struct SymbolTable{
+        explicit SymbolTable( std::vector<Elf64_Sym> const& vec):vec_{vec}{}
+        std::vector<Elf64_Sym> vec_;
+};
 
 struct ElfFile{
 
         using SectionType = boost::variant<
                 Nothing,
-                StringTable
+                StringTable,
+                SymbolTable
         >;
 
         std::vector<char> memory;
@@ -361,8 +427,14 @@ struct ElfFile{
         std::vector<Elf64_Phdr> program_headers;
 
         std::string SectionName(Elf64_Word offset)const{
-                if( auto ptr = boost::get<StringTable>(&sections.at(header.e_shstrndx))){
-                        return std::string{ptr->first_ + offset};
+                return LookupName( header.e_shstrndx, offset);
+        }
+        std::string LookupName(Elf64_Word index, Elf64_Word offset)const{
+                if( auto ptr = boost::get<StringTable>(&sections.at(index))){
+                        if( offset < section_headers.at(index).sh_size ){
+                                auto idx = ptr->first_ + offset;
+                                return std::string{idx};
+                        }
                 }
                 throw std::domain_error("out of range");
         }
@@ -437,18 +509,31 @@ void PrettyDisplay(ElfFile const& elf){
         namespace bpt = boost::property_tree;
         bpt::ptree out_header;
                 
-        std::string magic(4, ' ');
-        magic[0] = elf.header.e_ident[EI_MAG0];
-        magic[1] = elf.header.e_ident[EI_MAG1];
-        magic[2] = elf.header.e_ident[EI_MAG2];
-        magic[3] = elf.header.e_ident[EI_MAG3];
-
-        out_header.add("magic", magic);
-                
+        out_header.add("EI_MAG0", (int)elf.header.e_ident[EI_MAG0]);
+        out_header.add("EI_MAG1", (char)elf.header.e_ident[EI_MAG1]);
+        out_header.add("EI_MAG2", (char)elf.header.e_ident[EI_MAG2]);
+        out_header.add("EI_MAG3", (char)elf.header.e_ident[EI_MAG3]);
         out_header.add("EI_CLASS", ElfDataClass(elf.header.e_ident[EI_CLASS]).Name());
         out_header.add("EI_DATA", ElfDataEncoding(elf.header.e_ident[EI_DATA]).Name());
+        out_header.add("EI_VERSION", (int)elf.header.e_ident[EI_VERSION]);
         out_header.add("EI_OSABI", ElfOSABI(elf.header.e_ident[EI_OSABI]).Name());
+        out_header.add("EI_ABIVERSION", (int)elf.header.e_ident[EI_ABIVERSION]);
+        out_header.add("EI_PAD", (int)elf.header.e_ident[EI_PAD]);
+        out_header.add("EI_NIDENT", (int)elf.header.e_ident[EI_NIDENT]);
+        
         out_header.add("e_type", ElfObjectType(elf.header.e_type).Name());
+        out_header.add("e_machine", elf.header.e_machine);
+        out_header.add("e_version", elf.header.e_version);
+        out_header.add("e_entry", elf.header.e_entry);
+        out_header.add("e_phoff", elf.header.e_phoff);
+        out_header.add("e_shoff", elf.header.e_shoff);
+        out_header.add("e_flags", elf.header.e_flags);
+        out_header.add("e_ehsize", elf.header.e_ehsize);
+        out_header.add("e_phentsize", elf.header.e_phentsize);
+        out_header.add("e_phnum", elf.header.e_phnum);
+        out_header.add("e_shentsize", elf.header.e_shentsize);
+        out_header.add("e_shnum", elf.header.e_shnum);
+        out_header.add("e_shstrndx", elf.header.e_shstrndx);  
         
 
         bpt::ptree root;
@@ -471,15 +556,57 @@ void PrettyDisplay(ElfFile const& elf){
 
                 struct Visitor : boost::static_visitor<void>{
                         void operator()(Nothing const& )const{}
+                        void operator()(SymbolTable const& symt)const{
+                                bpt::ptree out;
+                                for( auto const& _ : symt.vec_ ){
+
+                                        bool special = false;
+                                        switch(_.st_shndx){
+                                        case SHN_UNDEF:
+                                        case SHN_LOPROC:
+                                        case SHN_HIPROC:
+                                        case SHN_LOOS:
+                                        case SHN_HIOS:
+                                        case SHN_ABS:
+                                        case SHN_COMMON:
+                                                special = true;
+                                        }
+
+                                        auto st_info_lower = _.st_info & 0xf;
+                                        auto st_info_upper = _.st_info >> 4;
+                                        bpt::ptree sym;
+                                        std::string s;
+                                        if( _.st_name != 0 )
+                                                s = elf_->LookupName( elf_->section_headers[i_].sh_link, _.st_name);
+                                        sym.add("st_name", s);
+                                        sym.add("st_info", (int)_.st_info);
+                                        sym.add("upper(st_info)", ElfSymbolBinding(st_info_upper).Name());
+                                        sym.add("lower(st_info)", ElfSymbolTypes(st_info_lower).Name());
+                                        sym.add("st_other", (int)_.st_other);
+                                        if( special ){
+                                                sym.add("st_shndx", ElfSymbolType(_.st_shndx).Name());
+                                        } else {
+                                                sym.add("st_shndx", _.st_shndx);
+                                        }
+                                        sym.add("st_value", _.st_value);
+                                        sym.add("st_size", _.st_size);
+                                        out.add_child("sym", sym);
+                                }
+                                root_->add_child("data", out);
+                        }
                         void operator()(StringTable const& st)const{
                                 bpt::ptree out;
                                 for( auto const& _ : st.vec_ )
                                         out.add("names", _);
                                 root_->add_child("data", out);
                         }
+                        size_t i_;
+                        ElfFile const* elf_;
                         bpt::ptree* root_;
                 };
                 Visitor v;
+                v.i_ = i;
+                v.elf_ = &elf;
                 v.root_ = &out_sh;
                 boost::apply_visitor(v, elf.sections[i]);
                 
@@ -491,7 +618,7 @@ void PrettyDisplay(ElfFile const& elf){
                 bpt::ptree out_sh;
                 out_sh.add("__index"     , i);
                 out_sh.add("p_type", ElfSectionType(ph.p_type).Name());
-                out_sh.add("p_flags", ph.p_flags);
+                out_sh.add("p_flags", ElfSegmentAttributes.MaskToString(ph.p_flags));
                 out_sh.add("p_offset", ph.p_offset);
                 out_sh.add("p_vaddr", ph.p_vaddr);
                 out_sh.add("p_paddr", ph.p_paddr);
@@ -545,6 +672,19 @@ struct ElfParser{
                                                         vec.push_back(tmp);
                                                 }
                                                 result->sections.push_back( StringTable{origin + sh->sh_offset, vec } );
+                                        }while(0);
+                                        break;
+                                case SHT_SYMTAB:
+                                        do{
+                                                auto iter = reinterpret_cast<Elf64_Sym*>(origin + sh->sh_offset);
+                                                auto end =  reinterpret_cast<Elf64_Sym*>(origin + sh->sh_offset + sh->sh_size);
+
+                                                std::vector<Elf64_Sym> vec;
+                                                for(;iter!=end;++iter){
+                                                        vec.push_back(*iter);
+                                                }
+                                                result->sections.push_back( SymbolTable{vec} );
+
                                         }while(0);
                                         break;
                                 default:
@@ -634,7 +774,7 @@ int main(int argc, char** argv){
         auto pret = parser.Parse( ifstr );
 
         if( std::unique_ptr<ElfFile>* ptr = boost::get<std::unique_ptr<ElfFile>>(&pret)){
-                RawDisplay(**ptr);                
+                //RawDisplay(**ptr);                
                 PrettyDisplay(**ptr);                
         } else if( std::string* ptr = boost::get<std::string>(&pret)){
                 std::cerr << *ptr << "\n";
