@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <boost/optional.hpp>
+#include <sstream>
+#include <cstring>
 
 
 
@@ -83,7 +85,32 @@ typedef struct
         Elf64_Word  sh_info;      /* Miscellaneous information */
         Elf64_Xword sh_addralign; /* Address alignment boundary */
         Elf64_Xword sh_entsize;   /* Size of entries, if section has table */
-} Elf64_Shdr
+        template<class V>
+        void Reflect(V v)const{
+                v("sh_name"     , sh_name);
+                v("sh_type"     , sh_type);
+                v("sh_flags"    , sh_flags);
+                v("sh_addr"     , sh_addr);
+                v("sh_offset"   , sh_offset);
+                v("sh_size"     , sh_size);
+                v("sh_link"     , sh_link);
+                v("sh_info"     , sh_info);
+                v("sh_addralign", sh_addralign);
+                v("sh_entsize"  , sh_entsize);  
+        }
+} Elf64_Shdr;
+
+typedef struct
+{
+        Elf64_Word  p_type;   /* Type of segment */
+        Elf64_Word  p_flags;  /* Segment attributes */
+        Elf64_Off   p_offset; /* Offset in file */
+        Elf64_Addr  p_vaddr;  /* Virtual address in memory */
+        Elf64_Addr  p_paddr;  /* Reserved */
+        Elf64_Xword p_filesz; /* Size of segment in file */
+        Elf64_Xword p_memsz;  /* Size of segment in memory */
+        Elf64_Xword p_align;  /* Alignment of segment */
+} Elf64_Phdr;
 
 #if 0
 enum ElfClass{
@@ -104,7 +131,7 @@ template<class T>
 struct EnumSwitchBuilder{
         struct Glyph{
                 Glyph( T value, std::string const& name,
-                       std::string const& desc):
+                       std::string const& desc = std::string{}):
                         value_{value}, name_{name}, 
                         desc_{desc}
                 {}
@@ -147,7 +174,9 @@ struct EnumSwitchBuilder{
                                 return *iter->second;
                         if( !! default_ )
                                 return default_.get();
-                        throw std::domain_error("no default case");
+                        std::stringstream msg;
+                        msg << "no default case for " << val;
+                        throw std::domain_error(msg.str());
                 }
                 auto const& operator()(T val)const{
                         return this->Switch(val);
@@ -159,7 +188,10 @@ struct EnumSwitchBuilder{
                 std::unordered_map<std::string, Glyph* > from_str_;
         };
         auto Make(){
-                return EnumSwitch{ glyphs_ , default_};
+                auto d = default_;
+                if( ! d )
+                        d = Glyph{static_cast<T>(0), "__unknown__"};
+                return EnumSwitch{ glyphs_ , d};
         }
 
 private:
@@ -195,6 +227,49 @@ static auto ElfObjectType = EnumSwitchBuilder<Elf64_Half>{}
         .Case(0xFFFF, "ET_HIPROC")
         .Make();
 
+enum ElfSHT{
+        SHT_NULL=0,
+        SHT_PROGBITS,
+        SHT_SYMTAB,
+        SHT_STRTAB,
+        SHT_RELA,
+        SHT_HASH,
+        SHT_DYNAMIC,
+        SHT_NOTE,
+        SHT_NOBITS,
+        SHT_REL,
+        SHT_SHLIB,
+        SHT_DYNSYM,
+        SHT_LOOS=0x60000000,
+        SHT_HIOS=0x6FFFFFFF,
+        SHT_LOPROC=0x70000000,
+        SHT_HIPROC=0x7FFFFFFF,
+};
+static auto ElfSectionType = EnumSwitchBuilder<Elf64_Word>{}
+        .Case(0, "SHT_NULL", "Marks an unused section header")
+        .Case(1, "SHT_PROGBITS", "Contains information defined by the program")
+        .Case(2, "SHT_SYMTAB", "Contains a linker symbol table")
+        .Case(3, "SHT_STRTAB", "Contains a string table")
+        .Case(4, "SHT_RELA", "Contains “Rela” type relocation entries")
+        .Case(5, "SHT_HASH", "Contains a symbol hash table")
+        .Case(6, "SHT_DYNAMIC", "Contains dynamic linking tables")
+        .Case(7, "SHT_NOTE", "Contains note information")
+        .Case(8, "SHT_NOBITS", "Contains uninitialized space; does not occupy any space in the file")
+        .Case(9, "SHT_REL", "Contains “Rel” type relocation entries")
+        .Case(10, "SHT_SHLIB", "Reserved")
+        .Case(11, "SHT_DYNSYM", "Contains a dynamic loader symbol table")
+        .Case(0x60000000, "SHT_LOOS", "Environment-specific use")
+        .Case(0x6FFFFFFF, "SHT_HIOS" )
+        .Case(0x70000000, "SHT_LOPROC", "Processor-specific use")
+        .Case(0x7FFFFFFF, "SHT_HIPROC")
+        .Make();
+
+
+
+struct PrettyPrinterContext{
+        std::vector<char> symbol_table;
+};
+
 struct PrettyPrinter{
         void DisplayHeader( Elf64_Ehdr const& header)const{
                 std::string magic(4, ' ');
@@ -214,6 +289,14 @@ struct PrettyPrinter{
                         std::cout << n << ":" << v << "\n";
                 });
         }
+        void DisplayProgramHeaderTable( Elf64_Shdr const& header){}
+        void DisplaySectionHeaderTable(PrettyPrinterContext const& ctx, Elf64_Shdr const& header){
+                std::cout << "sh_type"  << ElfSectionType(header.sh_type).Name() << "\n";
+                std::cout << "sh_name"  << &ctx.symbol_table.at(header.sh_name) << "\n";
+                header.Reflect( [](auto n, auto v){
+                        std::cout << n << ":" << v << "\n";
+                });
+        }
 };
 
 struct ElfParser{
@@ -228,13 +311,69 @@ struct ElfParser{
                         return "Unable to parse header";
                 }
 
+
+                std::vector<Elf64_Shdr> section_headers;
+
+                if( header.e_shoff != 0 ){
+                        size_t memory_size = header.e_shentsize * header.e_shnum;
+                        std::vector<char> raw;
+                        raw.resize( memory_size );
+                        is.seekg(header.e_shoff, is.beg );
+                        std::cout << "header.e_shentsize = " << header.e_shentsize << "\n";
+                        std::cout << "sizeof(Elf64_Shdr) = " << sizeof(Elf64_Shdr) << "\n";
+                        is.read( reinterpret_cast<char*>(&raw[0]), raw.size());
+                        if( ! is ){
+                                return "Unable to section header table";
+                        }
+                        char* ptr = &raw[0];
+                        for(size_t idx=0;idx!=header.e_shnum;++idx, ptr += header.e_shentsize){
+                                Elf64_Shdr* sh = reinterpret_cast<Elf64_Shdr*>(ptr);
+                                section_headers.push_back(*sh);
+                                
+                        }
+                }
+
+                std::vector<char> symbol_table_raw;
+                std::vector<std::string> symbol_table;
+                
+                for(auto const& _ : section_headers ){
+                        switch(_.sh_type){
+                        case SHT_STRTAB:
+                                //sh_offset sh_size  
+                                do{
+                                        is.seekg(_.sh_offset, is.beg );
+                                        symbol_table_raw.resize(_.sh_size);
+                                        is.read( &symbol_table_raw[0], symbol_table_raw.size());
+
+                                        auto iter = &symbol_table_raw[0];
+                                        auto end = iter + symbol_table_raw.size();
+                                        for(; iter != end; iter += strlen(iter)+1 ){
+                                                std::string tmp = iter;
+                                                symbol_table.push_back(tmp);
+                                                //std::cout << "str = " << iter << "\n";
+
+                                        }
+
+                                }while(0);
+                        }
+                }
+
+                if( true ){
+                        is.seekg(header.e_shstrndx, is.beg );
+                        
+                }
+                PrettyPrinterContext pctx;
+                pctx.symbol_table = symbol_table_raw;
+
                 PrettyPrinter pp;
                 pp.DisplayHeader(header);
+                for(auto const& _ : section_headers ){
+                        pp.DisplaySectionHeaderTable(pctx, _);
 
-
-                if( header_.e_phoff != 0 ){
-                        is.seekg(0, header_.e_phoff );
+                        
                 }
+
+
 
                 return "";
         }
