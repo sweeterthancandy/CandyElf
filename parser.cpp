@@ -190,6 +190,17 @@ struct EnumSwitchBuilder{
                 auto const& operator()(T val)const{
                         return this->Switch(val);
                 }
+                std::string MaskToString(T mask)const{
+                        std::stringstream sstr;
+                        std::string sep = "";
+                        for(auto const& _ : mem_ ){
+                                if( !! ( mask & _.Value()) ){
+                                        sstr << sep << _.Name();
+                                        sep = "|";
+                                }
+                        }
+                        return sstr.str();
+                }
         private:
                 std::vector< Glyph > mem_;
                 boost::optional<Glyph> default_;
@@ -287,6 +298,13 @@ static auto ElfSegmentType = EnumSwitchBuilder<Elf64_Word>{}
         .Case(0x7FFFFFFF, "PT_HIPROC")
         .Make();
 
+static auto ElfSectionAttributes = EnumSwitchBuilder<Elf64_Word>{}
+        .Case(0x1, "SHF_WRITE", "Section contains writable data")
+        .Case(0x2, "SHF_ALLOC", "Section is allocated in memory image of program")
+        .Case(0x4, "SHF_EXECINSTR", "Section contains executable instructions")
+        .Case(0x0F000000, "SHF_MASKOS", "Environment-specific use")
+        .Case(0xF0000000, "SHF_MASKPROC", "Processor-specific use")
+        .Make();
 
 struct PrettyPrinterContext{
         std::vector<char> symbol_table;
@@ -431,7 +449,7 @@ void PrettyDisplay(ElfFile const& elf){
                 bpt::ptree out_sh;
                 out_sh.add("sh_type"     , ElfSectionType(sh.sh_type).Name());
                 out_sh.add("sh_name"     , elf.memory[elf.header.e_shstrndx + sh.sh_name]);
-                out_sh.add("sh_flags"    , sh.sh_flags);
+                out_sh.add("sh_flags"    , ElfSectionAttributes.MaskToString(sh.sh_flags));
                 out_sh.add("sh_addr"     , sh.sh_addr);
                 out_sh.add("sh_offset"   , sh.sh_offset);
                 out_sh.add("sh_size"     , sh.sh_size);
