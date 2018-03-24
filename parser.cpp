@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <unordered_map>
 #include <boost/optional.hpp>
+#include <boost/variant.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
 #include <sstream>
 #include <cstring>
 
@@ -57,21 +60,6 @@ typedef struct
                 v("e_shstrndx", e_shstrndx);  
         }
 } Elf64_Ehdr;
-enum ElfIE{
-//          Name           Value | Purpose
-//      ----------------+--------+----------------
-        EI_MAG0=0,     //    0   | File identification
-        EI_MAG1,       //    1   |
-        EI_MAG2,       //    2   |
-        EI_MAG3,       //    3   |
-        EI_CLASS,      //    4   | File class
-        EI_DATA,       //    5   | Data encoding
-        EI_VERSION,    //    6   | File version
-        EI_OSABI,      //    7   | OS/ABI identification
-        EI_ABIVERSION, //    8   | ABI version
-        EI_PAD,        //    9   | Start of padding bytes
-        EI_NIDENT=16,  //   16   | Size of e_ident[]
-};
 
 typedef struct
 {
@@ -112,6 +100,22 @@ typedef struct
         Elf64_Xword p_align;  /* Alignment of segment */
 } Elf64_Phdr;
 
+enum ElfIE{
+//          Name           Value | Purpose
+//      ----------------+--------+----------------
+        EI_MAG0=0,     //    0   | File identification
+        EI_MAG1,       //    1   |
+        EI_MAG2,       //    2   |
+        EI_MAG3,       //    3   |
+        EI_CLASS,      //    4   | File class
+        EI_DATA,       //    5   | Data encoding
+        EI_VERSION,    //    6   | File version
+        EI_OSABI,      //    7   | OS/ABI identification
+        EI_ABIVERSION, //    8   | ABI version
+        EI_PAD,        //    9   | Start of padding bytes
+        EI_NIDENT=16,  //   16   | Size of e_ident[]
+};
+
 #if 0
 enum ElfClass{
 //       Name          | Value |     Meaning
@@ -137,6 +141,11 @@ struct EnumSwitchBuilder{
                 {}
                 auto Value()const{ return value_; }
                 auto const& Name()const{ return name_; }
+                auto const& TaggedName()const{
+                        std::stringstream sstr;
+                        sstr << name_ << "(" << (int)value_ << ")";
+                        return sstr.str();
+                }
                 auto const& Description()const{ return desc_; }
                 operator std::string const&()const{
                         return value_;
@@ -264,6 +273,19 @@ static auto ElfSectionType = EnumSwitchBuilder<Elf64_Word>{}
         .Case(0x7FFFFFFF, "SHT_HIPROC")
         .Make();
 
+static auto ElfSegmentType = EnumSwitchBuilder<Elf64_Word>{}
+        .Case(0, "PT_NULL", "Unused entry")
+        .Case(1, "PT_LOAD", "Loadable segment")
+        .Case(2 , "PT_DYNAMIC", "Dynamic linking tables")
+        .Case(3 , "PT_INTERP", "Program interpreter path name")
+        .Case(4 , "PT_NOTE", "Note sections")
+        .Case(5 , "PT_SHLIB", "Reserved")
+        .Case(6 , "PT_PHDR", "Program header table")
+        .Case(0x60000000 , "PT_LOOS", "Environment-specific use")
+        .Case(0x6FFFFFFF, "PT_HIOS")
+        .Case(0x70000000 , "PT_LOPROC", "Processor-specific use")
+        .Case(0x7FFFFFFF, "PT_HIPROC")
+        .Make();
 
 
 struct PrettyPrinterContext{
@@ -280,10 +302,6 @@ struct PrettyPrinter{
 
 
                 std::cout << "magic = " << magic << "\n";
-                std::cout << "e_ident[EI_CLASS] = " << ElfDataClass(header.e_ident[EI_CLASS]).Name() << "\n";
-                std::cout << "e_ident[EI_DATA] = " << ElfDataEncoding(header.e_ident[EI_DATA]).Name() << "\n";
-                std::cout << "e_ident[EI_OSABI] = " << ElfOSABI(header.e_ident[EI_OSABI]).Name() << "\n";
-                std::cout << "e_type = " << ElfObjectType(header.e_type).Name() << "\n";
 
                 header.Reflect( [](auto n, auto v){
                         std::cout << n << ":" << v << "\n";
@@ -299,39 +317,224 @@ struct PrettyPrinter{
         }
 };
 
+
+struct Nothing{};
+struct StringTable{
+        explicit StringTable(std::vector<std::string> const& vec):vec_{vec}{}
+        std::vector<std::string> vec_;
+};
+
+struct ElfFile{
+
+        using SectionType = boost::variant<
+                Nothing,
+                StringTable
+        >;
+
+        std::vector<char> memory;
+        Elf64_Ehdr header;
+        std::vector<Elf64_Shdr> section_headers;
+
+        std::vector< SectionType > sections;
+
+        std::vector<Elf64_Phdr> program_headers;
+
+
+};
+void RawDisplay(ElfFile const& elf){
+        namespace bpt = boost::property_tree;
+        bpt::ptree out_header;
+        
+        out_header.add("EI_MAG0", (int)elf.header.e_ident[EI_MAG0]);
+        out_header.add("EI_MAG1", (int)elf.header.e_ident[EI_MAG1]);
+        out_header.add("EI_MAG2", (int)elf.header.e_ident[EI_MAG2]);
+        out_header.add("EI_MAG3", (int)elf.header.e_ident[EI_MAG3]);
+        out_header.add("EI_CLASS", (int)elf.header.e_ident[EI_CLASS]);
+        out_header.add("EI_DATA", (int)elf.header.e_ident[EI_DATA]);
+        out_header.add("EI_VERSION", (int)elf.header.e_ident[EI_VERSION]);
+        out_header.add("EI_OSABI", (int)elf.header.e_ident[EI_OSABI]);
+        out_header.add("EI_ABIVERSION", (int)elf.header.e_ident[EI_ABIVERSION]);
+        out_header.add("EI_PAD", (int)elf.header.e_ident[EI_PAD]);
+        out_header.add("EI_NIDENT", (int)elf.header.e_ident[EI_NIDENT]);
+        
+        out_header.add("e_type", elf.header.e_type);
+        out_header.add("e_machine", elf.header.e_machine);
+        out_header.add("e_version", elf.header.e_version);
+        out_header.add("e_entry", elf.header.e_entry);
+        out_header.add("e_phoff", elf.header.e_phoff);
+        out_header.add("e_shoff", elf.header.e_shoff);
+        out_header.add("e_flags", elf.header.e_flags);
+        out_header.add("e_ehsize", elf.header.e_ehsize);
+        out_header.add("e_phentsize", elf.header.e_phentsize);
+        out_header.add("e_phnum", elf.header.e_phnum);
+        out_header.add("e_shentsize", elf.header.e_shentsize);
+        out_header.add("e_shnum", elf.header.e_shnum);
+        out_header.add("e_shstrndx", elf.header.e_shstrndx);  
+
+        bpt::ptree root;
+        root.add_child("header", out_header);
+
+        for( auto const& sh : elf.section_headers){
+                bpt::ptree out_sh;
+                out_sh.add("sh_name"     , sh.sh_name);
+                out_sh.add("sh_type"     , sh.sh_type);
+                out_sh.add("sh_flags"    , sh.sh_flags);
+                out_sh.add("sh_addr"     , sh.sh_addr);
+                out_sh.add("sh_offset"   , sh.sh_offset);
+                out_sh.add("sh_size"     , sh.sh_size);
+                out_sh.add("sh_link"     , sh.sh_link);
+                out_sh.add("sh_info"     , sh.sh_info);
+                out_sh.add("sh_addralign", sh.sh_addralign);
+                out_sh.add("sh_entsize"  , sh.sh_entsize);  
+                root.add_child("section_headers", out_sh);
+        }
+        
+        for( auto const& ph : elf.program_headers){
+                bpt::ptree out_sh;
+                out_sh.add("p_type", ph.p_type);
+                out_sh.add("p_flags", ph.p_flags);
+                out_sh.add("p_offset", ph.p_offset);
+                out_sh.add("p_vaddr", ph.p_vaddr);
+                out_sh.add("p_paddr", ph.p_paddr);
+                out_sh.add("p_filesz", ph.p_filesz);
+                out_sh.add("p_memsz", ph.p_memsz);
+                out_sh.add("p_align", ph.p_align);  
+                root.add_child("program_headers", out_sh);
+        }
+
+        bpt::write_json(std::cout, root);
+}
+
+void PrettyDisplay(ElfFile const& elf){
+        namespace bpt = boost::property_tree;
+        bpt::ptree out_header;
+                
+        std::string magic(4, ' ');
+        magic[0] = elf.header.e_ident[EI_MAG0];
+        magic[1] = elf.header.e_ident[EI_MAG1];
+        magic[2] = elf.header.e_ident[EI_MAG2];
+        magic[3] = elf.header.e_ident[EI_MAG3];
+
+        out_header.add("magic", magic);
+                
+        out_header.add("EI_CLASS", ElfDataClass(elf.header.e_ident[EI_CLASS]).Name());
+        out_header.add("EI_DATA", ElfDataEncoding(elf.header.e_ident[EI_DATA]).Name());
+        out_header.add("EI_OSABI", ElfOSABI(elf.header.e_ident[EI_OSABI]).Name());
+        out_header.add("e_type", ElfObjectType(elf.header.e_type).Name());
+        
+
+        bpt::ptree root;
+        root.add_child("header", out_header);
+
+        for(size_t i=0;i!=elf.section_headers.size();++i){
+                auto const& sh = elf.section_headers[i];
+                bpt::ptree out_sh;
+                out_sh.add("sh_type"     , ElfSectionType(sh.sh_type).Name());
+                out_sh.add("sh_name"     , elf.memory[elf.header.e_shstrndx + sh.sh_name]);
+                out_sh.add("sh_flags"    , sh.sh_flags);
+                out_sh.add("sh_addr"     , sh.sh_addr);
+                out_sh.add("sh_offset"   , sh.sh_offset);
+                out_sh.add("sh_size"     , sh.sh_size);
+                out_sh.add("sh_link"     , sh.sh_link);
+                out_sh.add("sh_info"     , sh.sh_info);
+                out_sh.add("sh_addralign", sh.sh_addralign);
+                out_sh.add("sh_entsize"  , sh.sh_entsize);  
+
+                struct Visitor : boost::static_visitor<void>{
+                        void operator()(Nothing const& )const{}
+                        void operator()(StringTable const& st)const{
+                                bpt::ptree out;
+                                for( auto const& _ : st.vec_ )
+                                        out.add("names", _);
+                                root_->add_child("data", out);
+                        }
+                        bpt::ptree* root_;
+                };
+                Visitor v;
+                v.root_ = &out_sh;
+                boost::apply_visitor(v, elf.sections[i]);
+                
+                root.add_child("section_headers", out_sh);
+        }
+        
+        for( auto const& ph : elf.program_headers){
+                bpt::ptree out_sh;
+                out_sh.add("p_type", ElfSectionType(ph.p_type).Name());
+                out_sh.add("p_flags", ph.p_flags);
+                out_sh.add("p_offset", ph.p_offset);
+                out_sh.add("p_vaddr", ph.p_vaddr);
+                out_sh.add("p_paddr", ph.p_paddr);
+                out_sh.add("p_filesz", ph.p_filesz);
+                out_sh.add("p_memsz", ph.p_memsz);
+                out_sh.add("p_align", ph.p_align);  
+                root.add_child("program_headers", out_sh);
+        }
+
+        bpt::write_json(std::cout, root);
+}
+
 struct ElfParser{
-        std::string Parse(std::ifstream& is){
-                Elf64_Ehdr header;
-
+        using ResultType = boost::variant<
+               std::unique_ptr<ElfFile>,
+               std::string
+        >;
+        ResultType Parse(std::ifstream& is){
+                auto result = std::make_unique<ElfFile>();
+                
+                // we can't do this for very large objects
+                is.seekg(0, is.end );
+                size_t file_size= is.tellg();
+                result->memory.resize(file_size);
                 is.seekg(0, is.beg );
-
-                is.read( reinterpret_cast<char*>(&header), sizeof(header));
-
-                if( ! is ){
-                        return "Unable to parse header";
+                is.read( reinterpret_cast<char*>(&result->memory[0]), result->memory.size());
+                if( is.bad() ){
+                        return "Unable to read full file";
                 }
 
+                auto origin = &result->memory[0];
+                auto& header = result->header;
 
-                std::vector<Elf64_Shdr> section_headers;
+                std::memcpy(&header, origin, sizeof(result->header));
+
 
                 if( header.e_shoff != 0 ){
-                        size_t memory_size = header.e_shentsize * header.e_shnum;
-                        std::vector<char> raw;
-                        raw.resize( memory_size );
-                        is.seekg(header.e_shoff, is.beg );
-                        std::cout << "header.e_shentsize = " << header.e_shentsize << "\n";
-                        std::cout << "sizeof(Elf64_Shdr) = " << sizeof(Elf64_Shdr) << "\n";
-                        is.read( reinterpret_cast<char*>(&raw[0]), raw.size());
-                        if( ! is ){
-                                return "Unable to section header table";
-                        }
-                        char* ptr = &raw[0];
+                        char* ptr = origin + header.e_shoff;
                         for(size_t idx=0;idx!=header.e_shnum;++idx, ptr += header.e_shentsize){
-                                Elf64_Shdr* sh = reinterpret_cast<Elf64_Shdr*>(ptr);
-                                section_headers.push_back(*sh);
-                                
+                                auto* sh = reinterpret_cast<Elf64_Shdr*>(ptr);
+                                result->section_headers.push_back(*sh);
+
+                                switch(sh->sh_type){
+                                case SHT_STRTAB:
+                                        do{
+                                                auto iter = origin + sh->sh_offset;
+                                                auto end = iter + sh->sh_size; 
+                                                std::vector<std::string> vec;
+                                                for(; iter != end; iter += strlen(iter)+1 ){
+                                                        std::string tmp = iter;
+                                                        vec.push_back(tmp);
+                                                }
+                                                result->sections.push_back( StringTable{ vec } );
+                                        }while(0);
+                                        break;
+                                default:
+                                        result->sections.push_back( Nothing{} );
+                                        break;
+                                }
+
                         }
                 }
+
+                if( header.e_phoff != 0 ){
+                        
+                        char* ptr = origin + header.e_phoff;
+                        for(size_t idx=0;idx!=header.e_phnum;++idx, ptr += header.e_phentsize){
+                                auto* ph = reinterpret_cast<Elf64_Phdr*>(ptr);
+                                result->program_headers.push_back(*ph);
+                        }
+                }
+
+
+                #if 0
 
                 std::vector<char> symbol_table_raw;
                 std::vector<std::string> symbol_table;
@@ -373,9 +576,10 @@ struct ElfParser{
                         
                 }
 
+                #endif
 
 
-                return "";
+                return result;
         }
 };
 
@@ -397,7 +601,13 @@ int main(int argc, char** argv){
         }
 
         auto pret = parser.Parse( ifstr );
-        std::cout << "pret = " << pret << "\n";
+
+        if( std::unique_ptr<ElfFile>* ptr = boost::get<std::unique_ptr<ElfFile>>(&pret)){
+                RawDisplay(**ptr);                
+                PrettyDisplay(**ptr);                
+        } else if( std::string* ptr = boost::get<std::string>(&pret)){
+                std::cerr << *ptr << "\n";
+        }
 
         return EXIT_SUCCESS;
 }
