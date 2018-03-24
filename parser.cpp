@@ -41,24 +41,6 @@ typedef struct
 	Elf64_Half e_shentsize;    /* Size of section header entry */
 	Elf64_Half e_shnum;        /* Number of section header entries */
 	Elf64_Half e_shstrndx;     /* Section name string table index */
-
-        template<class V>
-        void Reflect(V v)const{
-                // v("e_ident", e_ident);
-                v("e_type", e_type);
-                v("e_machine", e_machine);
-                v("e_version", e_version);
-                v("e_entry", e_entry);
-                v("e_phoff", e_phoff);
-                v("e_shoff", e_shoff);
-                v("e_flags", e_flags);
-                v("e_ehsize", e_ehsize);
-                v("e_phentsize", e_phentsize);
-                v("e_phnum", e_phnum);
-                v("e_shentsize", e_shentsize);
-                v("e_shnum", e_shnum);
-                v("e_shstrndx", e_shstrndx);  
-        }
 } Elf64_Ehdr;
 
 typedef struct
@@ -73,19 +55,6 @@ typedef struct
         Elf64_Word  sh_info;      /* Miscellaneous information */
         Elf64_Xword sh_addralign; /* Address alignment boundary */
         Elf64_Xword sh_entsize;   /* Size of entries, if section has table */
-        template<class V>
-        void Reflect(V v)const{
-                v("sh_name"     , sh_name);
-                v("sh_type"     , sh_type);
-                v("sh_flags"    , sh_flags);
-                v("sh_addr"     , sh_addr);
-                v("sh_offset"   , sh_offset);
-                v("sh_size"     , sh_size);
-                v("sh_link"     , sh_link);
-                v("sh_info"     , sh_info);
-                v("sh_addralign", sh_addralign);
-                v("sh_entsize"  , sh_entsize);  
-        }
 } Elf64_Shdr;
 
 typedef struct
@@ -126,7 +95,6 @@ enum ElfIE{
         EI_NIDENT=16,  //   16   | Size of e_ident[]
 };
 
-#if 0
 enum ElfClass{
 //       Name          | Value |     Meaning
 //      ---------------+-------+---------------
@@ -138,7 +106,6 @@ enum ElfData{
         ELFDATA2LSB=1, // 1 Object file data structures are littleendian
         ELFDATA2MSB,   // 2 Object file data structures are bigendian
 };
-#endif
 
 
 template<class T>
@@ -367,34 +334,6 @@ enum ElfSHN{
         SHN_COMMON=0xFFF2,
 };
 
-struct PrettyPrinterContext{
-        std::vector<char> symbol_table;
-};
-
-struct PrettyPrinter{
-        void DisplayHeader( Elf64_Ehdr const& header)const{
-                std::string magic(4, ' ');
-                magic[0] = header.e_ident[EI_MAG0];
-                magic[1] = header.e_ident[EI_MAG1];
-                magic[2] = header.e_ident[EI_MAG2];
-                magic[3] = header.e_ident[EI_MAG3];
-
-
-                std::cout << "magic = " << magic << "\n";
-
-                header.Reflect( [](auto n, auto v){
-                        std::cout << n << ":" << v << "\n";
-                });
-        }
-        void DisplayProgramHeaderTable( Elf64_Shdr const& header){}
-        void DisplaySectionHeaderTable(PrettyPrinterContext const& ctx, Elf64_Shdr const& header){
-                std::cout << "sh_type"  << ElfSectionType(header.sh_type).Name() << "\n";
-                std::cout << "sh_name"  << &ctx.symbol_table.at(header.sh_name) << "\n";
-                header.Reflect( [](auto n, auto v){
-                        std::cout << n << ":" << v << "\n";
-                });
-        }
-};
 
 
 struct Nothing{};
@@ -441,69 +380,6 @@ struct ElfFile{
 
 
 };
-void RawDisplay(ElfFile const& elf){
-        namespace bpt = boost::property_tree;
-        bpt::ptree out_header;
-        
-        out_header.add("EI_MAG0", (int)elf.header.e_ident[EI_MAG0]);
-        out_header.add("EI_MAG1", (int)elf.header.e_ident[EI_MAG1]);
-        out_header.add("EI_MAG2", (int)elf.header.e_ident[EI_MAG2]);
-        out_header.add("EI_MAG3", (int)elf.header.e_ident[EI_MAG3]);
-        out_header.add("EI_CLASS", (int)elf.header.e_ident[EI_CLASS]);
-        out_header.add("EI_DATA", (int)elf.header.e_ident[EI_DATA]);
-        out_header.add("EI_VERSION", (int)elf.header.e_ident[EI_VERSION]);
-        out_header.add("EI_OSABI", (int)elf.header.e_ident[EI_OSABI]);
-        out_header.add("EI_ABIVERSION", (int)elf.header.e_ident[EI_ABIVERSION]);
-        out_header.add("EI_PAD", (int)elf.header.e_ident[EI_PAD]);
-        out_header.add("EI_NIDENT", (int)elf.header.e_ident[EI_NIDENT]);
-        
-        out_header.add("e_type", elf.header.e_type);
-        out_header.add("e_machine", elf.header.e_machine);
-        out_header.add("e_version", elf.header.e_version);
-        out_header.add("e_entry", elf.header.e_entry);
-        out_header.add("e_phoff", elf.header.e_phoff);
-        out_header.add("e_shoff", elf.header.e_shoff);
-        out_header.add("e_flags", elf.header.e_flags);
-        out_header.add("e_ehsize", elf.header.e_ehsize);
-        out_header.add("e_phentsize", elf.header.e_phentsize);
-        out_header.add("e_phnum", elf.header.e_phnum);
-        out_header.add("e_shentsize", elf.header.e_shentsize);
-        out_header.add("e_shnum", elf.header.e_shnum);
-        out_header.add("e_shstrndx", elf.header.e_shstrndx);  
-
-        bpt::ptree root;
-        root.add_child("header", out_header);
-
-        for( auto const& sh : elf.section_headers){
-                bpt::ptree out_sh;
-                out_sh.add("sh_name"     , sh.sh_name);
-                out_sh.add("sh_type"     , sh.sh_type);
-                out_sh.add("sh_flags"    , sh.sh_flags);
-                out_sh.add("sh_addr"     , sh.sh_addr);
-                out_sh.add("sh_offset"   , sh.sh_offset);
-                out_sh.add("sh_size"     , sh.sh_size);
-                out_sh.add("sh_link"     , sh.sh_link);
-                out_sh.add("sh_info"     , sh.sh_info);
-                out_sh.add("sh_addralign", sh.sh_addralign);
-                out_sh.add("sh_entsize"  , sh.sh_entsize);  
-                root.add_child("section_headers", out_sh);
-        }
-        
-        for( auto const& ph : elf.program_headers){
-                bpt::ptree out_sh;
-                out_sh.add("p_type", ph.p_type);
-                out_sh.add("p_flags", ph.p_flags);
-                out_sh.add("p_offset", ph.p_offset);
-                out_sh.add("p_vaddr", ph.p_vaddr);
-                out_sh.add("p_paddr", ph.p_paddr);
-                out_sh.add("p_filesz", ph.p_filesz);
-                out_sh.add("p_memsz", ph.p_memsz);
-                out_sh.add("p_align", ph.p_align);  
-                root.add_child("program_headers", out_sh);
-        }
-
-        bpt::write_json(std::cout, root);
-}
 
 void PrettyDisplay(ElfFile const& elf){
         namespace bpt = boost::property_tree;
@@ -705,50 +581,6 @@ struct ElfParser{
                 }
 
 
-                #if 0
-
-                std::vector<char> symbol_table_raw;
-                std::vector<std::string> symbol_table;
-                
-                for(auto const& _ : section_headers ){
-                        switch(_.sh_type){
-                        case SHT_STRTAB:
-                                //sh_offset sh_size  
-                                do{
-                                        is.seekg(_.sh_offset, is.beg );
-                                        symbol_table_raw.resize(_.sh_size);
-                                        is.read( &symbol_table_raw[0], symbol_table_raw.size());
-
-                                        auto iter = &symbol_table_raw[0];
-                                        auto end = iter + symbol_table_raw.size();
-                                        for(; iter != end; iter += strlen(iter)+1 ){
-                                                std::string tmp = iter;
-                                                symbol_table.push_back(tmp);
-                                                //std::cout << "str = " << iter << "\n";
-
-                                        }
-
-                                }while(0);
-                        }
-                }
-
-                if( true ){
-                        is.seekg(header.e_shstrndx, is.beg );
-                        
-                }
-                PrettyPrinterContext pctx;
-                pctx.symbol_table = symbol_table_raw;
-
-                PrettyPrinter pp;
-                pp.DisplayHeader(header);
-                for(auto const& _ : section_headers ){
-                        pp.DisplaySectionHeaderTable(pctx, _);
-
-                        
-                }
-
-                #endif
-
 
                 return result;
         }
@@ -774,7 +606,6 @@ int main(int argc, char** argv){
         auto pret = parser.Parse( ifstr );
 
         if( std::unique_ptr<ElfFile>* ptr = boost::get<std::unique_ptr<ElfFile>>(&pret)){
-                //RawDisplay(**ptr);                
                 PrettyDisplay(**ptr);                
         } else if( std::string* ptr = boost::get<std::string>(&pret)){
                 std::cerr << *ptr << "\n";
